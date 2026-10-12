@@ -13,9 +13,10 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+local TeleportConn
 pcall(function()
-	LocalPlayer.OnTeleport:Connect(function(State)
-		if State == Enum.TeleportState.Started and queue_on_teleport then
+	TeleportConn = LocalPlayer.OnTeleport:Connect(function(State)
+		if State == Enum.TeleportState.Started and queue_on_teleport and getgenv().AlreadyLoaded then
 			queue_on_teleport("repeat task.wait() until game:IsLoaded() loadstring(game:HttpGet('https://raw.githubusercontent.com/nashSatanic/snifeduels/refs/heads/main/leak.lua'))()")
 		end
 	end)
@@ -23,7 +24,15 @@ end)
 
 getgenv().AlreadyLoaded = true
 
-workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+local Connections = {}
+
+local function BindSignal(signal, fn)
+	local conn = signal:Connect(fn)
+	table.insert(Connections, conn)
+	return conn
+end
+
+BindSignal(workspace:GetPropertyChangedSignal("CurrentCamera"), function()
 	Camera = workspace.CurrentCamera
 end)
 
@@ -51,11 +60,18 @@ local Config = {
 	},
 	ESP = {
 		Enabled = false,
+		Box = false,
+		BoxColor = Color3.fromRGB(168, 85, 247),
 		Chams = false,
+		ChamsColor = Color3.fromRGB(168, 85, 247),
 		Names = false,
 		Health = false,
+		HealthBar = false,
 		Distance = false,
-		ChamsColor = Color3.fromRGB(168, 85, 247),
+		Tracers = false,
+		TracerColor = Color3.fromRGB(168, 85, 247),
+		HeadDot = false,
+		HeadDotColor = Color3.fromRGB(255, 255, 255),
 	},
 	Aimbot = {
 		Enabled = false,
@@ -67,21 +83,17 @@ local Config = {
 	},
 	KnifeControl = {
 		Enabled = false,
-		GuideSpeed = 120,
+		GuideSpeed = 150,
 		PredictMovement = true,
-		ControlRadius = 500,
+		PredictionMultiplier = 1.1,
+		ArcHeight = 0,
+		SteerMode = "Direct",
+		ControlRadius = 750,
 		TargetPart = "Head",
 	}
 }
 
 local ESPData = {}
-local Connections = {}
-
-local function BindSignal(signal, fn)
-	local conn = signal:Connect(fn)
-	table.insert(Connections, conn)
-	return conn
-end
 
 local function IsEnemy(player)
 	if not player or player == LocalPlayer then return false end
@@ -101,10 +113,20 @@ local function IsEnemy(player)
 	end
 
 	if LocalPlayer.Character and player.Character then
-		local localAttr = LocalPlayer.Character:GetAttribute("Team") or LocalPlayer:GetAttribute("Team")
-		local targetAttr = player.Character:GetAttribute("Team") or player:GetAttribute("Team")
+		local localAttr = LocalPlayer.Character:GetAttribute("Team") or LocalPlayer:GetAttribute("Team") or LocalPlayer.Character:GetAttribute("Faction")
+		local targetAttr = player.Character:GetAttribute("Team") or player:GetAttribute("Team") or player.Character:GetAttribute("Faction")
 		if localAttr and targetAttr then
 			return localAttr ~= targetAttr
+		end
+	end
+
+	local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+	local targetLeaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats and targetLeaderstats then
+		local localTeamStat = leaderstats:FindFirstChild("Team") or leaderstats:FindFirstChild("Faction")
+		local targetTeamStat = targetLeaderstats:FindFirstChild("Team") or targetLeaderstats:FindFirstChild("Faction")
+		if localTeamStat and targetTeamStat then
+			return localTeamStat.Value ~= targetTeamStat.Value
 		end
 	end
 
@@ -131,12 +153,13 @@ FOVCorner.Parent = FOVCircle
 
 local function CleanPlayerESP(player)
 	if ESPData[player] then
-		if ESPData[player].Highlight then
-			pcall(function() ESPData[player].Highlight:Destroy() end)
-		end
-		if ESPData[player].Billboard then
-			pcall(function() ESPData[player].Billboard:Destroy() end)
-		end
+		local data = ESPData[player]
+		if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+		if data.Billboard then pcall(function() data.Billboard:Destroy() end) end
+		if data.BoxFrame then pcall(function() data.BoxFrame:Destroy() end) end
+		if data.HealthFrame then pcall(function() data.HealthFrame:Destroy() end) end
+		if data.TracerLine then pcall(function() data.TracerLine:Destroy() end) end
+		if data.HeadMarker then pcall(function() data.HeadMarker:Destroy() end) end
 		ESPData[player] = nil
 	end
 end
@@ -195,6 +218,119 @@ local function UpdatePlayerESP(player)
 			pcall(function() data.Highlight:Destroy() end)
 			data.Highlight = nil
 		end
+	end
+
+	local hrpPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+
+	if onScreen then
+		local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+		local legPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+		local boxHeight = math.abs(headPos.Y - legPos.Y)
+		local boxWidth = boxHeight * 0.65
+
+		if Config.ESP.Box then
+			if not data.BoxFrame or not data.BoxFrame.Parent then
+				local box = Instance.new("Frame")
+				box.Name = "ESP_Box"
+				box.BackgroundTransparency = 1
+				box.Parent = ScreenGui
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Name = "Stroke"
+				stroke.Thickness = 1.5
+				stroke.Color = Config.ESP.BoxColor
+				stroke.Parent = box
+
+				data.BoxFrame = box
+			end
+			data.BoxFrame.Size = UDim2.new(0, boxWidth, 0, boxHeight)
+			data.BoxFrame.Position = UDim2.new(0, hrpPos.X - (boxWidth / 2), 0, hrpPos.Y - (boxHeight / 2))
+			data.BoxFrame.Visible = true
+		else
+			if data.BoxFrame then data.BoxFrame.Visible = false end
+		end
+
+		if Config.ESP.HealthBar then
+			if not data.HealthFrame or not data.HealthFrame.Parent then
+				local healthBg = Instance.new("Frame")
+				healthBg.Name = "ESP_HealthBg"
+				healthBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+				healthBg.BorderSizePixel = 0
+				healthBg.Parent = ScreenGui
+
+				local healthFill = Instance.new("Frame")
+				healthFill.Name = "Fill"
+				healthFill.BorderSizePixel = 0
+				healthFill.Parent = healthBg
+
+				data.HealthFrame = healthBg
+				data.HealthFill = healthFill
+			end
+
+			local healthPercent = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+			data.HealthFrame.Size = UDim2.new(0, 4, 0, boxHeight)
+			data.HealthFrame.Position = UDim2.new(0, hrpPos.X - (boxWidth / 2) - 7, 0, hrpPos.Y - (boxHeight / 2))
+			data.HealthFrame.Visible = true
+
+			data.HealthFill.Size = UDim2.new(1, 0, healthPercent, 0)
+			data.HealthFill.Position = UDim2.new(0, 0, 1 - healthPercent, 0)
+			data.HealthFill.BackgroundColor3 = Color3.fromHSV(healthPercent * 0.3, 0.9, 0.9)
+		else
+			if data.HealthFrame then data.HealthFrame.Visible = false end
+		end
+
+		if Config.ESP.HeadDot then
+			if not data.HeadMarker or not data.HeadMarker.Parent then
+				local dot = Instance.new("Frame")
+				dot.Name = "ESP_HeadDot"
+				dot.AnchorPoint = Vector2.new(0.5, 0.5)
+				dot.BackgroundColor3 = Config.ESP.HeadDotColor
+				dot.BorderSizePixel = 0
+				dot.Parent = ScreenGui
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(1, 0)
+				corner.Parent = dot
+
+				data.HeadMarker = dot
+			end
+			local dotSize = math.clamp(boxHeight * 0.12, 4, 10)
+			data.HeadMarker.Size = UDim2.new(0, dotSize, 0, dotSize)
+			data.HeadMarker.Position = UDim2.new(0, headPos.X, 0, headPos.Y)
+			data.HeadMarker.Visible = true
+		else
+			if data.HeadMarker then data.HeadMarker.Visible = false end
+		end
+
+		if Config.ESP.Tracers then
+			if not data.TracerLine or not data.TracerLine.Parent then
+				local line = Instance.new("Frame")
+				line.Name = "ESP_Tracer"
+				line.AnchorPoint = Vector2.new(0.5, 0.5)
+				line.BackgroundColor3 = Config.ESP.TracerColor
+				line.BorderSizePixel = 0
+				line.Parent = ScreenGui
+
+				data.TracerLine = line
+			end
+
+			local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+			local targetScreenPos = Vector2.new(hrpPos.X, hrpPos.Y)
+			local distance = (targetScreenPos - screenCenter).Magnitude
+			local angle = math.atan2(targetScreenPos.Y - screenCenter.Y, targetScreenPos.X - screenCenter.X)
+
+			data.TracerLine.Size = UDim2.new(0, distance, 0, 1.5)
+			data.TracerLine.Position = UDim2.new(0, (screenCenter.X + targetScreenPos.X) / 2, 0, (screenCenter.Y + targetScreenPos.Y) / 2)
+			data.TracerLine.Rotation = math.deg(angle)
+			data.TracerLine.Visible = true
+		else
+			if data.TracerLine then data.TracerLine.Visible = false end
+		end
+	else
+		if data.BoxFrame then data.BoxFrame.Visible = false end
+		if data.HealthFrame then data.HealthFrame.Visible = false end
+		if data.HeadMarker then data.HeadMarker.Visible = false end
+		if data.TracerLine then data.TracerLine.Visible = false end
 	end
 
 	local needBillboard = Config.ESP.Names or Config.ESP.Health or Config.ESP.Distance
@@ -332,16 +468,37 @@ local function SteerKnifeProjectile(knife)
 			local velocity = targetHRP.AssemblyLinearVelocity
 			local distance = (targetPos - knife.Position).Magnitude
 			local timeToReach = distance / math.max(Config.KnifeControl.GuideSpeed, 1)
-			targetPos = targetPos + (velocity * timeToReach * 0.85)
+			targetPos = targetPos + (velocity * timeToReach * Config.KnifeControl.PredictionMultiplier)
 		end
+	end
+
+	if Config.KnifeControl.ArcHeight > 0 then
+		local distance = (targetPos - knife.Position).Magnitude
+		local arcFactor = math.sin(math.pi * math.clamp(distance / Config.KnifeControl.ControlRadius, 0, 1))
+		targetPos = targetPos + Vector3.new(0, arcFactor * Config.KnifeControl.ArcHeight, 0)
 	end
 
 	local direction = (targetPos - knife.Position).Unit
 	local newVelocity = direction * Config.KnifeControl.GuideSpeed
 
 	pcall(function()
-		knife.AssemblyLinearVelocity = newVelocity
+		if Config.KnifeControl.SteerMode == "SmoothLerp" then
+			knife.AssemblyLinearVelocity = knife.AssemblyLinearVelocity:Lerp(newVelocity, 0.35)
+		else
+			knife.AssemblyLinearVelocity = newVelocity
+		end
+		
 		knife.CFrame = CFrame.lookAt(knife.Position, targetPos)
+
+		local bodyVel = knife:FindFirstChildOfClass("BodyVelocity")
+		if bodyVel then
+			bodyVel.Velocity = newVelocity
+		end
+
+		local linearVel = knife:FindFirstChildOfClass("LinearVelocity")
+		if linearVel then
+			linearVel.VectorVelocity = newVelocity
+		end
 	end)
 end
 
@@ -355,7 +512,9 @@ local function ProcessKnifeControl()
 		workspace:FindFirstChild("RaycastFilter"),
 		workspace:FindFirstChild("Thrown"),
 		workspace:FindFirstChild("Knives"),
-		workspace:FindFirstChild("Entities")
+		workspace:FindFirstChild("Entities"),
+		workspace:FindFirstChild("Weapons"),
+		workspace:FindFirstChild("Items")
 	}
 
 	for _, folder in ipairs(searchFolders) do
@@ -363,7 +522,7 @@ local function ProcessKnifeControl()
 			for _, obj in ipairs(folder:GetChildren()) do
 				if obj:IsA("BasePart") or obj:IsA("Model") then
 					local name = obj.Name:lower()
-					if name:find("knife") or name:find("blade") or name:find("throw") or name:find("projectile") or name:find("handle") or name:find("snife") or name:find("dagger") then
+					if name:find("knife") or name:find("blade") or name:find("throw") or name:find("projectile") or name:find("handle") or name:find("snife") or name:find("dagger") or name:find("kunai") or name:find("cleaver") then
 						local mainPart = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
 						if mainPart and not mainPart:IsDescendantOf(LocalPlayer.Character) then
 							SteerKnifeProjectile(mainPart)
@@ -377,8 +536,8 @@ end
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 540, 0, 360)
-MainFrame.Position = UDim2.new(0.5, -270, 0.5, -180)
+MainFrame.Size = UDim2.new(0, 560, 0, 380)
+MainFrame.Position = UDim2.new(0.5, -280, 0.5, -190)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 13, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -395,7 +554,7 @@ MainStroke.Thickness = 1.2
 MainStroke.Parent = MainFrame
 
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 145, 1, 0)
+Sidebar.Size = UDim2.new(0, 150, 1, 0)
 Sidebar.BackgroundColor3 = Color3.fromRGB(18, 15, 26)
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
@@ -430,8 +589,8 @@ TabList.Padding = UDim.new(0, 4)
 TabList.Parent = TabContainer
 
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -145, 1, 0)
-ContentArea.Position = UDim2.new(0, 145, 0, 0)
+ContentArea.Size = UDim2.new(1, -150, 1, 0)
+ContentArea.Position = UDim2.new(0, 150, 0, 0)
 ContentArea.BackgroundTransparency = 1
 ContentArea.Parent = MainFrame
 
@@ -609,14 +768,48 @@ local function CreateSlider(parent, text, min, max, default, callback)
 	end)
 end
 
+local function CreateButton(parent, text, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 32)
+	frame.BackgroundTransparency = 1
+	frame.Parent = parent
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 1, 0)
+	btn.BackgroundColor3 = Color3.fromRGB(32, 28, 44)
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(240, 240, 245)
+	btn.TextSize = 13
+	btn.Font = Enum.Font.SourceSansSemibold
+	btn.Parent = frame
+
+	local bCorner = Instance.new("UICorner")
+	bCorner.CornerRadius = UDim.new(0, 6)
+	bCorner.Parent = btn
+
+	local bStroke = Instance.new("UIStroke")
+	bStroke.Color = Config.Settings.AccentColor
+	bStroke.Thickness = 1
+	bStroke.Transparency = 0.5
+	bStroke.Parent = btn
+
+	btn.MouseButton1Click:Connect(function()
+		if callback then callback() end
+	end)
+end
+
 local espPage = CreateTab("ESP")
 CreateToggle(espPage, "Master ESP Toggle", Config.ESP.Enabled, function(v)
 	Config.ESP.Enabled = v
 	if not v then ClearAllESP() end
 end)
+CreateToggle(espPage, "2D Bounding Box", Config.ESP.Box, function(v) Config.ESP.Box = v end)
+CreateToggle(espPage, "Health Bar", Config.ESP.HealthBar, function(v) Config.ESP.HealthBar = v end)
+CreateToggle(espPage, "Tracers / Snaplines", Config.ESP.Tracers, function(v) Config.ESP.Tracers = v end)
+CreateToggle(espPage, "Head Marker", Config.ESP.HeadDot, function(v) Config.ESP.HeadDot = v end)
 CreateToggle(espPage, "Chams Wallhack", Config.ESP.Chams, function(v) Config.ESP.Chams = v end)
 CreateToggle(espPage, "Display Names", Config.ESP.Names, function(v) Config.ESP.Names = v end)
-CreateToggle(espPage, "Display Health", Config.ESP.Health, function(v) Config.ESP.Health = v end)
+CreateToggle(espPage, "Display Health %", Config.ESP.Health, function(v) Config.ESP.Health = v end)
 CreateToggle(espPage, "Display Distance", Config.ESP.Distance, function(v) Config.ESP.Distance = v end)
 
 local aimPage = CreateTab("Aimbot")
@@ -629,11 +822,32 @@ CreateSlider(aimPage, "Smoothness", 1, 20, Config.Aimbot.Smooth, function(v) Con
 local knifePage = CreateTab("Knife Control")
 CreateToggle(knifePage, "Enable Knife Steering", Config.KnifeControl.Enabled, function(v) Config.KnifeControl.Enabled = v end)
 CreateToggle(knifePage, "Predict Movement", Config.KnifeControl.PredictMovement, function(v) Config.KnifeControl.PredictMovement = v end)
-CreateSlider(knifePage, "Knife Speed", 20, 350, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
-CreateSlider(knifePage, "Control Radius", 50, 1000, Config.KnifeControl.ControlRadius, function(v) Config.KnifeControl.ControlRadius = v end)
+CreateSlider(knifePage, "Knife Speed", 20, 500, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
+CreateSlider(knifePage, "Arc Curve Height", 0, 50, Config.KnifeControl.ArcHeight, function(v) Config.KnifeControl.ArcHeight = v end)
+CreateSlider(knifePage, "Control Radius", 50, 1500, Config.KnifeControl.ControlRadius, function(v) Config.KnifeControl.ControlRadius = v end)
 
 local settingsPage = CreateTab("Settings")
 CreateToggle(settingsPage, "Global Team Check", Config.Settings.TeamCheck, function(v) Config.Settings.TeamCheck = v end)
+
+CreateButton(settingsPage, "Unload Script & Teleport Lock", function()
+	getgenv().AlreadyLoaded = false
+
+	if TeleportConn then
+		pcall(function() TeleportConn:Disconnect() end)
+		TeleportConn = nil
+	end
+
+	for _, conn in ipairs(Connections) do
+		pcall(function() conn:Disconnect() end)
+	end
+	Connections = {}
+
+	ClearAllESP()
+
+	if ScreenGui then
+		pcall(function() ScreenGui:Destroy() end)
+	end
+end)
 
 for name, tData in pairs(Tabs) do
 	tData.Ind.Visible = true
