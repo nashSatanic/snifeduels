@@ -9,6 +9,8 @@ local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local Teams = game:GetService("Teams")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -44,6 +46,7 @@ end
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = Tag
 ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 local parented = pcall(function()
@@ -60,8 +63,10 @@ local Config = {
 	},
 	ESP = {
 		Enabled = false,
-		Box = false,
+		BoxMode = "3D",
 		BoxColor = Color3.fromRGB(168, 85, 247),
+		Skeleton = false,
+		SkeletonColor = Color3.fromRGB(255, 255, 255),
 		Chams = false,
 		ChamsColor = Color3.fromRGB(168, 85, 247),
 		Names = false,
@@ -75,6 +80,7 @@ local Config = {
 	},
 	Aimbot = {
 		Enabled = false,
+		LockTarget = false,
 		VisCheck = true,
 		FOV = 150,
 		Smooth = 5,
@@ -83,50 +89,55 @@ local Config = {
 	},
 	KnifeControl = {
 		Enabled = false,
-		GuideSpeed = 150,
+		GuideSpeed = 180,
 		PredictMovement = true,
-		PredictionMultiplier = 1.1,
+		PredictionMultiplier = 1.25,
 		ArcHeight = 0,
-		SteerMode = "Direct",
-		ControlRadius = 750,
+		SteerMode = "SmoothLerp",
+		ControlRadius = 1000,
 		TargetPart = "Head",
+		LockOnTarget = true,
 	}
 }
 
 local ESPData = {}
+local LockedTargetPlayer = nil
 
 local function IsEnemy(player)
 	if not player or player == LocalPlayer then return false end
 	if not Config.Settings.TeamCheck then return true end
-	
-	local localTeam = LocalPlayer.Team
-	local targetTeam = player.Team
 
-	if localTeam ~= nil and targetTeam ~= nil then
-		return localTeam ~= targetTeam
+	if LocalPlayer.Team ~= nil and player.Team ~= nil then
+		return LocalPlayer.Team ~= player.Team
 	end
 
-	local localTeamColor = LocalPlayer.TeamColor
-	local targetTeamColor = player.TeamColor
-	if localTeamColor ~= nil and targetTeamColor ~= nil then
-		return localTeamColor ~= targetTeamColor
-	end
-
-	if LocalPlayer.Character and player.Character then
-		local localAttr = LocalPlayer.Character:GetAttribute("Team") or LocalPlayer:GetAttribute("Team") or LocalPlayer.Character:GetAttribute("Faction")
-		local targetAttr = player.Character:GetAttribute("Team") or player:GetAttribute("Team") or player.Character:GetAttribute("Faction")
-		if localAttr and targetAttr then
-			return localAttr ~= targetAttr
+	if #Teams:GetTeams() > 0 then
+		if LocalPlayer.Neutral or player.Neutral then
+			return true
+		end
+		if LocalPlayer.TeamColor ~= nil and player.TeamColor ~= nil then
+			return LocalPlayer.TeamColor ~= player.TeamColor
 		end
 	end
 
-	local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-	local targetLeaderstats = player:FindFirstChild("leaderstats")
-	if leaderstats and targetLeaderstats then
-		local localTeamStat = leaderstats:FindFirstChild("Team") or leaderstats:FindFirstChild("Faction")
-		local targetTeamStat = targetLeaderstats:FindFirstChild("Team") or targetLeaderstats:FindFirstChild("Faction")
-		if localTeamStat and targetTeamStat then
-			return localTeamStat.Value ~= targetTeamStat.Value
+	local lChar = LocalPlayer.Character
+	local tChar = player.Character
+
+	if lChar and tChar then
+		local lAttr = lChar:GetAttribute("Team") or lChar:GetAttribute("Faction") or LocalPlayer:GetAttribute("Team") or LocalPlayer:GetAttribute("Faction")
+		local tAttr = tChar:GetAttribute("Team") or tChar:GetAttribute("Faction") or player:GetAttribute("Team") or player:GetAttribute("Faction")
+		if lAttr ~= nil and tAttr ~= nil then
+			return tostring(lAttr) ~= tostring(tAttr)
+		end
+	end
+
+	local lLeader = LocalPlayer:FindFirstChild("leaderstats")
+	local tLeader = player:FindFirstChild("leaderstats")
+	if lLeader and tLeader then
+		local lTeam = lLeader:FindFirstChild("Team") or lLeader:FindFirstChild("Faction")
+		local tTeam = tLeader:FindFirstChild("Team") or tLeader:FindFirstChild("Faction")
+		if lTeam and tTeam then
+			return tostring(lTeam.Value) ~= tostring(tTeam.Value)
 		end
 	end
 
@@ -151,15 +162,33 @@ local FOVCorner = Instance.new("UICorner")
 FOVCorner.CornerRadius = UDim.new(1, 0)
 FOVCorner.Parent = FOVCircle
 
+local TargetTracker = Instance.new("Frame")
+TargetTracker.Name = "TargetTracker"
+TargetTracker.AnchorPoint = Vector2.new(0.5, 0.5)
+TargetTracker.BackgroundTransparency = 1
+TargetTracker.Size = UDim2.new(0, 24, 0, 24)
+TargetTracker.Visible = false
+TargetTracker.Parent = ScreenGui
+
+local TrackerStroke = Instance.new("UIStroke")
+TrackerStroke.Color = Color3.fromRGB(255, 60, 60)
+TrackerStroke.Thickness = 1.8
+TrackerStroke.Parent = TargetTracker
+
+local TrackerCorner = Instance.new("UICorner")
+TrackerCorner.CornerRadius = UDim.new(1, 0)
+TrackerCorner.Parent = TargetTracker
+
 local function CleanPlayerESP(player)
 	if ESPData[player] then
 		local data = ESPData[player]
 		if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
 		if data.Billboard then pcall(function() data.Billboard:Destroy() end) end
-		if data.BoxFrame then pcall(function() data.BoxFrame:Destroy() end) end
+		if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) end
 		if data.HealthFrame then pcall(function() data.HealthFrame:Destroy() end) end
 		if data.TracerLine then pcall(function() data.TracerLine:Destroy() end) end
 		if data.HeadMarker then pcall(function() data.HeadMarker:Destroy() end) end
+		if data.SkeletonFolder then pcall(function() data.SkeletonFolder:Destroy() end) end
 		ESPData[player] = nil
 	end
 end
@@ -169,6 +198,130 @@ local function ClearAllESP()
 		CleanPlayerESP(player)
 	end
 	ESPData = {}
+end
+
+local R15Bones = {
+	{"Head", "UpperTorso"},
+	{"UpperTorso", "LowerTorso"},
+	{"UpperTorso", "LeftUpperArm"},
+	{"LeftUpperArm", "LeftLowerArm"},
+	{"LeftLowerArm", "LeftHand"},
+	{"UpperTorso", "RightUpperArm"},
+	{"RightUpperArm", "RightLowerArm"},
+	{"RightLowerArm", "RightHand"},
+	{"LowerTorso", "LeftUpperLeg"},
+	{"LeftUpperLeg", "LeftLowerLeg"},
+	{"LeftLowerLeg", "LeftFoot"},
+	{"LowerTorso", "RightUpperLeg"},
+	{"RightUpperLeg", "RightLowerLeg"},
+	{"RightLowerLeg", "RightFoot"}
+}
+
+local R6Bones = {
+	{"Head", "Torso"},
+	{"Torso", "Left Arm"},
+	{"Torso", "Right Arm"},
+	{"Torso", "Left Leg"},
+	{"Torso", "Right Leg"}
+}
+
+local function DrawLineSegment(parent, name)
+	local line = parent:FindFirstChild(name)
+	if not line then
+		line = Instance.new("Frame")
+		line.Name = name
+		line.AnchorPoint = Vector2.new(0.5, 0.5)
+		line.BorderSizePixel = 0
+		line.Parent = parent
+	end
+	return line
+end
+
+local function UpdateLineBetweenPoints(line, p1, p2, color, thickness)
+	local dist = (p2 - p1).Magnitude
+	local angle = math.atan2(p2.Y - p1.Y, p2.X - p1.X)
+	line.Size = UDim2.new(0, dist, 0, thickness or 1.5)
+	line.Position = UDim2.new(0, (p1.X + p2.X) / 2, 0, (p1.Y + p2.Y) / 2)
+	line.Rotation = math.deg(angle)
+	line.BackgroundColor3 = color
+	line.Visible = true
+end
+
+local Box3DEdges = {
+	{1, 2}, {2, 3}, {3, 4}, {4, 1},
+	{5, 6}, {6, 7}, {7, 8}, {8, 5},
+	{1, 5}, {2, 6}, {3, 7}, {4, 8}
+}
+
+local function Draw3DBox(folder, char, color)
+	local cframe, size = char:GetBoundingBox()
+	local h = size * 0.5
+
+	local corners3D = {
+		cframe * Vector3.new(-h.X,  h.Y, -h.Z),
+		cframe * Vector3.new( h.X,  h.Y, -h.Z),
+		cframe * Vector3.new( h.X, -h.Y, -h.Z),
+		cframe * Vector3.new(-h.X, -h.Y, -h.Z),
+		cframe * Vector3.new(-h.X,  h.Y,  h.Z),
+		cframe * Vector3.new( h.X,  h.Y,  h.Z),
+		cframe * Vector3.new( h.X, -h.Y,  h.Z),
+		cframe * Vector3.new(-h.X, -h.Y,  h.Z),
+	}
+
+	local screenPoints = {}
+	local anyVisible = false
+
+	for i, pt in ipairs(corners3D) do
+		local sPos, onScreen = Camera:WorldToViewportPoint(pt)
+		if onScreen then
+			anyVisible = true
+		end
+		screenPoints[i] = Vector2.new(sPos.X, sPos.Y)
+	end
+
+	if not anyVisible then return false end
+
+	for i, edge in ipairs(Box3DEdges) do
+		local p1 = screenPoints[edge[1]]
+		local p2 = screenPoints[edge[2]]
+		local line = DrawLineSegment(folder, "Box3D_" .. tostring(i))
+		UpdateLineBetweenPoints(line, p1, p2, color, 1.5)
+	end
+
+	return true
+end
+
+local function GetCharacterBoundingScreenBox(char)
+	local cframe, size = char:GetBoundingBox()
+	local halfSize = size * 0.5
+
+	local corners = {
+		cframe * Vector3.new(-halfSize.X, halfSize.Y, -halfSize.Z),
+		cframe * Vector3.new(halfSize.X, halfSize.Y, -halfSize.Z),
+		cframe * Vector3.new(-halfSize.X, -halfSize.Y, -halfSize.Z),
+		cframe * Vector3.new(halfSize.X, -halfSize.Y, -halfSize.Z),
+		cframe * Vector3.new(-halfSize.X, halfSize.Y, halfSize.Z),
+		cframe * Vector3.new(halfSize.X, halfSize.Y, halfSize.Z),
+		cframe * Vector3.new(-halfSize.X, -halfSize.Y, halfSize.Z),
+		cframe * Vector3.new(halfSize.X, -halfSize.Y, halfSize.Z),
+	}
+
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local anyVisible = false
+
+	for _, corner in ipairs(corners) do
+		local screenPos, onScreen = Camera:WorldToViewportPoint(corner)
+		if onScreen then
+			anyVisible = true
+		end
+		minX = math.min(minX, screenPos.X)
+		minY = math.min(minY, screenPos.Y)
+		maxX = math.max(maxX, screenPos.X)
+		maxY = math.max(maxY, screenPos.Y)
+	end
+
+	return anyVisible, minX, minY, maxX - minX, maxY - minY
 end
 
 local function UpdatePlayerESP(player)
@@ -201,7 +354,7 @@ local function UpdatePlayerESP(player)
 			local hl = Instance.new("Highlight")
 			hl.Name = "ESP_Cham"
 			hl.FillColor = Config.ESP.ChamsColor
-			hl.FillTransparency = 0.4
+			hl.FillTransparency = 0.35
 			hl.OutlineColor = Color3.fromRGB(255, 255, 255)
 			hl.OutlineTransparency = 0.1
 			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -220,34 +373,65 @@ local function UpdatePlayerESP(player)
 		end
 	end
 
-	local hrpPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+	local onScreen, boxX, boxY, boxWidth, boxHeight = GetCharacterBoundingScreenBox(char)
+	local headScreenPos, headOnScreen = Camera:WorldToViewportPoint(head.Position)
+	local hrpScreenPos, hrpOnScreen = Camera:WorldToViewportPoint(hrp.Position)
 
 	if onScreen then
-		local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-		local legPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
-		local boxHeight = math.abs(headPos.Y - legPos.Y)
-		local boxWidth = boxHeight * 0.65
-
-		if Config.ESP.Box then
-			if not data.BoxFrame or not data.BoxFrame.Parent then
-				local box = Instance.new("Frame")
-				box.Name = "ESP_Box"
-				box.BackgroundTransparency = 1
-				box.Parent = ScreenGui
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Name = "Stroke"
-				stroke.Thickness = 1.5
-				stroke.Color = Config.ESP.BoxColor
-				stroke.Parent = box
-
-				data.BoxFrame = box
+		if Config.ESP.BoxMode ~= "Off" then
+			if not data.BoxFolder or not data.BoxFolder.Parent then
+				local folder = Instance.new("Folder")
+				folder.Name = "ESP_BoxFolder"
+				folder.Parent = ScreenGui
+				data.BoxFolder = folder
 			end
-			data.BoxFrame.Size = UDim2.new(0, boxWidth, 0, boxHeight)
-			data.BoxFrame.Position = UDim2.new(0, hrpPos.X - (boxWidth / 2), 0, hrpPos.Y - (boxHeight / 2))
-			data.BoxFrame.Visible = true
+
+			if Config.ESP.BoxMode == "3D" then
+				Draw3DBox(data.BoxFolder, char, Config.ESP.BoxColor)
+			elseif Config.ESP.BoxMode == "Full" then
+				local box = data.BoxFolder:FindFirstChild("FullBox")
+				if not box then
+					box = Instance.new("Frame")
+					box.Name = "FullBox"
+					box.BackgroundTransparency = 1
+					box.Parent = data.BoxFolder
+					local stroke = Instance.new("UIStroke")
+					stroke.Name = "Stroke"
+					stroke.Thickness = 1.5
+					stroke.Color = Config.ESP.BoxColor
+					stroke.Parent = box
+				end
+				box.Size = UDim2.new(0, boxWidth, 0, boxHeight)
+				box.Position = UDim2.new(0, boxX, 0, boxY)
+				box.Visible = true
+			end
 		else
-			if data.BoxFrame then data.BoxFrame.Visible = false end
+			if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) data.BoxFolder = nil end
+		end
+
+		if Config.ESP.Skeleton then
+			if not data.SkeletonFolder or not data.SkeletonFolder.Parent then
+				local folder = Instance.new("Folder")
+				folder.Name = "ESP_SkeletonFolder"
+				folder.Parent = ScreenGui
+				data.SkeletonFolder = folder
+			end
+
+			local boneList = hum.RigType == Enum.HumanoidRigType.R15 and R15Bones or R6Bones
+			for i, pair in ipairs(boneList) do
+				local partA = char:FindFirstChild(pair[1])
+				local partB = char:FindFirstChild(pair[2])
+				if partA and partB then
+					local posA, visA = Camera:WorldToViewportPoint(partA.Position)
+					local posB, visB = Camera:WorldToViewportPoint(partB.Position)
+					if visA and visB then
+						local line = DrawLineSegment(data.SkeletonFolder, "Bone_" .. tostring(i))
+						UpdateLineBetweenPoints(line, Vector2.new(posA.X, posA.Y), Vector2.new(posB.X, posB.Y), Config.ESP.SkeletonColor, 1.2)
+					end
+				end
+			end
+		else
+			if data.SkeletonFolder then pcall(function() data.SkeletonFolder:Destroy() end) data.SkeletonFolder = nil end
 		end
 
 		if Config.ESP.HealthBar then
@@ -269,17 +453,17 @@ local function UpdatePlayerESP(player)
 
 			local healthPercent = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
 			data.HealthFrame.Size = UDim2.new(0, 4, 0, boxHeight)
-			data.HealthFrame.Position = UDim2.new(0, hrpPos.X - (boxWidth / 2) - 7, 0, hrpPos.Y - (boxHeight / 2))
+			data.HealthFrame.Position = UDim2.new(0, boxX - 7, 0, boxY)
 			data.HealthFrame.Visible = true
 
 			data.HealthFill.Size = UDim2.new(1, 0, healthPercent, 0)
 			data.HealthFill.Position = UDim2.new(0, 0, 1 - healthPercent, 0)
-			data.HealthFill.BackgroundColor3 = Color3.fromHSV(healthPercent * 0.3, 0.9, 0.9)
+			data.HealthFill.BackgroundColor3 = Color3.fromHSV(healthPercent * 0.35, 0.9, 0.95)
 		else
 			if data.HealthFrame then data.HealthFrame.Visible = false end
 		end
 
-		if Config.ESP.HeadDot then
+		if Config.ESP.HeadDot and headOnScreen then
 			if not data.HeadMarker or not data.HeadMarker.Parent then
 				local dot = Instance.new("Frame")
 				dot.Name = "ESP_HeadDot"
@@ -296,13 +480,13 @@ local function UpdatePlayerESP(player)
 			end
 			local dotSize = math.clamp(boxHeight * 0.12, 4, 10)
 			data.HeadMarker.Size = UDim2.new(0, dotSize, 0, dotSize)
-			data.HeadMarker.Position = UDim2.new(0, headPos.X, 0, headPos.Y)
+			data.HeadMarker.Position = UDim2.new(0, headScreenPos.X, 0, headScreenPos.Y)
 			data.HeadMarker.Visible = true
 		else
 			if data.HeadMarker then data.HeadMarker.Visible = false end
 		end
 
-		if Config.ESP.Tracers then
+		if Config.ESP.Tracers and hrpOnScreen then
 			if not data.TracerLine or not data.TracerLine.Parent then
 				local line = Instance.new("Frame")
 				line.Name = "ESP_Tracer"
@@ -315,19 +499,14 @@ local function UpdatePlayerESP(player)
 			end
 
 			local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
-			local targetScreenPos = Vector2.new(hrpPos.X, hrpPos.Y)
-			local distance = (targetScreenPos - screenCenter).Magnitude
-			local angle = math.atan2(targetScreenPos.Y - screenCenter.Y, targetScreenPos.X - screenCenter.X)
-
-			data.TracerLine.Size = UDim2.new(0, distance, 0, 1.5)
-			data.TracerLine.Position = UDim2.new(0, (screenCenter.X + targetScreenPos.X) / 2, 0, (screenCenter.Y + targetScreenPos.Y) / 2)
-			data.TracerLine.Rotation = math.deg(angle)
-			data.TracerLine.Visible = true
+			local targetScreenPos = Vector2.new(hrpScreenPos.X, hrpScreenPos.Y)
+			UpdateLineBetweenPoints(data.TracerLine, screenCenter, targetScreenPos, Config.ESP.TracerColor, 1.2)
 		else
 			if data.TracerLine then data.TracerLine.Visible = false end
 		end
 	else
-		if data.BoxFrame then data.BoxFrame.Visible = false end
+		if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) data.BoxFolder = nil end
+		if data.SkeletonFolder then pcall(function() data.SkeletonFolder:Destroy() end) data.SkeletonFolder = nil end
 		if data.HealthFrame then data.HealthFrame.Visible = false end
 		if data.HeadMarker then data.HeadMarker.Visible = false end
 		if data.TracerLine then data.TracerLine.Visible = false end
@@ -389,6 +568,9 @@ end
 
 BindSignal(Players.PlayerRemoving, function(plr)
 	CleanPlayerESP(plr)
+	if LockedTargetPlayer == plr then
+		LockedTargetPlayer = nil
+	end
 end)
 
 local function IsVisible(targetPart, character)
@@ -407,6 +589,7 @@ local function GetClosestTarget(customFOV)
 	local mousePos = UserInputService:GetMouseLocation()
 	local closestDist = customFOV or Config.Aimbot.FOV
 	local targetPart = nil
+	local selectedPlayer = nil
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if IsEnemy(plr) and plr.Character then
@@ -420,16 +603,25 @@ local function GetClosestTarget(customFOV)
 						if not Config.Aimbot.VisCheck or IsVisible(part, plr.Character) then
 							closestDist = dist
 							targetPart = part
+							selectedPlayer = plr
 						end
 					end
 				end
 			end
 		end
 	end
-	return targetPart
+	return targetPart, selectedPlayer
 end
 
 local function GetClosestTargetWorld()
+	if LockedTargetPlayer and LockedTargetPlayer.Character then
+		local hum = LockedTargetPlayer.Character:FindFirstChildOfClass("Humanoid")
+		local part = LockedTargetPlayer.Character:FindFirstChild(Config.KnifeControl.TargetPart) or LockedTargetPlayer.Character:FindFirstChild("Head") or LockedTargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if hum and hum.Health > 0 and part then
+			return part
+		end
+	end
+
 	local char = LocalPlayer.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return nil end
@@ -483,7 +675,7 @@ local function SteerKnifeProjectile(knife)
 
 	pcall(function()
 		if Config.KnifeControl.SteerMode == "SmoothLerp" then
-			knife.AssemblyLinearVelocity = knife.AssemblyLinearVelocity:Lerp(newVelocity, 0.35)
+			knife.AssemblyLinearVelocity = knife.AssemblyLinearVelocity:Lerp(newVelocity, 0.45)
 		else
 			knife.AssemblyLinearVelocity = newVelocity
 		end
@@ -536,8 +728,8 @@ end
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 560, 0, 380)
-MainFrame.Position = UDim2.new(0.5, -280, 0.5, -190)
+MainFrame.Size = UDim2.new(0, 580, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -290, 0.5, -200)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 13, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -545,7 +737,7 @@ MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 8)
+MainCorner.CornerRadius = UDim.new(0, 10)
 MainCorner.Parent = MainFrame
 
 local MainStroke = Instance.new("UIStroke")
@@ -554,7 +746,7 @@ MainStroke.Thickness = 1.2
 MainStroke.Parent = MainFrame
 
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 150, 1, 0)
+Sidebar.Size = UDim2.new(0, 155, 1, 0)
 Sidebar.BackgroundColor3 = Color3.fromRGB(18, 15, 26)
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
@@ -570,7 +762,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 0, 40)
 Title.Position = UDim2.new(0, 10, 0, 10)
 Title.BackgroundTransparency = 1
-Title.Text = "NASH CORE"
+Title.Text = "NASH CORE v2"
 Title.TextColor3 = Color3.fromRGB(240, 240, 245)
 Title.TextSize = 15
 Title.Font = Enum.Font.SourceSansBold
@@ -589,8 +781,8 @@ TabList.Padding = UDim.new(0, 4)
 TabList.Parent = TabContainer
 
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -150, 1, 0)
-ContentArea.Position = UDim2.new(0, 150, 0, 0)
+ContentArea.Size = UDim2.new(1, -155, 1, 0)
+ContentArea.Position = UDim2.new(0, 155, 0, 0)
 ContentArea.BackgroundTransparency = 1
 ContentArea.Parent = MainFrame
 
@@ -803,7 +995,15 @@ CreateToggle(espPage, "Master ESP Toggle", Config.ESP.Enabled, function(v)
 	Config.ESP.Enabled = v
 	if not v then ClearAllESP() end
 end)
-CreateToggle(espPage, "2D Bounding Box", Config.ESP.Box, function(v) Config.ESP.Box = v end)
+CreateToggle(espPage, "3D Bounding Box ESP", Config.ESP.BoxMode == "3D", function(v)
+	Config.ESP.BoxMode = v and "3D" or "Off"
+	ClearAllESP()
+end)
+CreateToggle(espPage, "Full 2D Box ESP", Config.ESP.BoxMode == "Full", function(v)
+	Config.ESP.BoxMode = v and "Full" or "Off"
+	ClearAllESP()
+end)
+CreateToggle(espPage, "Skeleton ESP", Config.ESP.Skeleton, function(v) Config.ESP.Skeleton = v end)
 CreateToggle(espPage, "Health Bar", Config.ESP.HealthBar, function(v) Config.ESP.HealthBar = v end)
 CreateToggle(espPage, "Tracers / Snaplines", Config.ESP.Tracers, function(v) Config.ESP.Tracers = v end)
 CreateToggle(espPage, "Head Marker", Config.ESP.HeadDot, function(v) Config.ESP.HeadDot = v end)
@@ -821,13 +1021,17 @@ CreateSlider(aimPage, "Smoothness", 1, 20, Config.Aimbot.Smooth, function(v) Con
 
 local knifePage = CreateTab("Knife Control")
 CreateToggle(knifePage, "Enable Knife Steering", Config.KnifeControl.Enabled, function(v) Config.KnifeControl.Enabled = v end)
+CreateToggle(knifePage, "Target Lock System", Config.KnifeControl.LockOnTarget, function(v) Config.KnifeControl.LockOnTarget = v end)
 CreateToggle(knifePage, "Predict Movement", Config.KnifeControl.PredictMovement, function(v) Config.KnifeControl.PredictMovement = v end)
-CreateSlider(knifePage, "Knife Speed", 20, 500, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
+CreateSlider(knifePage, "Knife Speed", 20, 600, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
 CreateSlider(knifePage, "Arc Curve Height", 0, 50, Config.KnifeControl.ArcHeight, function(v) Config.KnifeControl.ArcHeight = v end)
 CreateSlider(knifePage, "Control Radius", 50, 1500, Config.KnifeControl.ControlRadius, function(v) Config.KnifeControl.ControlRadius = v end)
 
 local settingsPage = CreateTab("Settings")
-CreateToggle(settingsPage, "Global Team Check", Config.Settings.TeamCheck, function(v) Config.Settings.TeamCheck = v end)
+CreateToggle(settingsPage, "Global Team Check", Config.Settings.TeamCheck, function(v)
+	Config.Settings.TeamCheck = v
+	ClearAllESP()
+end)
 
 CreateButton(settingsPage, "Unload Script & Teleport Lock", function()
 	getgenv().AlreadyLoaded = false
@@ -892,12 +1096,32 @@ BindSignal(RunService.RenderStepped, function()
 		FOVCircle.Visible = false
 	end
 
+	local aimTargetPart, aimTargetPlayer = GetClosestTarget()
 	if Config.Aimbot.Enabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-		local target = GetClosestTarget()
-		if target then
+		if aimTargetPart then
 			local smoothFactor = math.clamp(1 / math.max(Config.Aimbot.Smooth, 1), 0.01, 1)
-			Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, target.Position), smoothFactor)
+			Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, aimTargetPart.Position), smoothFactor)
+			if Config.KnifeControl.LockOnTarget then
+				LockedTargetPlayer = aimTargetPlayer
+			end
 		end
+	end
+
+	if LockedTargetPlayer and LockedTargetPlayer.Character then
+		local hrp = LockedTargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+			if onScreen then
+				TargetTracker.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+				TargetTracker.Visible = true
+			else
+				TargetTracker.Visible = false
+			end
+		else
+			TargetTracker.Visible = false
+		end
+	else
+		TargetTracker.Visible = false
 	end
 
 	if Config.ESP.Enabled then
