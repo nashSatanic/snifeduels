@@ -9,7 +9,7 @@ local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
-local GuiService = game:GetService("GuiService")
+local Lighting = game:GetService("Lighting")
 local Teams = game:GetService("Teams")
 
 local LocalPlayer = Players.LocalPlayer
@@ -60,10 +60,11 @@ local Config = {
 	Settings = {
 		TeamCheck = true,
 		AccentColor = Color3.fromRGB(168, 85, 247),
+		RainbowMode = false,
 	},
 	ESP = {
 		Enabled = false,
-		BoxMode = "3D",
+		BoxMode = "3D Wireframe",
 		BoxColor = Color3.fromRGB(168, 85, 247),
 		Skeleton = false,
 		SkeletonColor = Color3.fromRGB(255, 255, 255),
@@ -89,19 +90,173 @@ local Config = {
 	},
 	KnifeControl = {
 		Enabled = false,
-		GuideSpeed = 180,
+		GuideSpeed = 220,
 		PredictMovement = true,
-		PredictionMultiplier = 1.25,
+		PredictionMultiplier = 1.3,
 		ArcHeight = 0,
 		SteerMode = "SmoothLerp",
-		ControlRadius = 1000,
+		ControlRadius = 1200,
 		TargetPart = "Head",
 		LockOnTarget = true,
+		VisualTrail = true,
+	},
+	World = {
+		Skybox = "Default",
+		TimeOfDay = 14,
+		ChangeTime = false,
+	},
+	Crosshair = {
+		Enabled = false,
+		Size = 10,
+		Gap = 4,
+		Thickness = 2,
+		Color = Color3.fromRGB(0, 255, 200),
+		Spin = false,
+	},
+	Effects = {
+		Hitmarker = true,
+		HitSound = true,
+		KnifeBeam = true,
 	}
 }
 
 local ESPData = {}
 local LockedTargetPlayer = nil
+
+local SkyPresets = {
+	["Purple Nebula"] = {
+		SkyboxBk = "rbxassetid://159454299",
+		SkyboxDn = "rbxassetid://159454152",
+		SkyboxFt = "rbxassetid://159454272",
+		SkyboxLf = "rbxassetid://159454231",
+		SkyboxRt = "rbxassetid://159454256",
+		SkyboxUp = "rbxassetid://159454288",
+	},
+	["Red Sunset"] = {
+		SkyboxBk = "rbxassetid://320182523",
+		SkyboxDn = "rbxassetid://320182823",
+		SkyboxFt = "rbxassetid://320182902",
+		SkyboxLf = "rbxassetid://320183057",
+		SkyboxRt = "rbxassetid://320183212",
+		SkyboxUp = "rbxassetid://320183350",
+	},
+	["Night Sky"] = {
+		SkyboxBk = "rbxassetid://12064107",
+		SkyboxDn = "rbxassetid://12064152",
+		SkyboxFt = "rbxassetid://12064121",
+		SkyboxLf = "rbxassetid://12064131",
+		SkyboxRt = "rbxassetid://12064115",
+		SkyboxUp = "rbxassetid://12064141",
+	}
+}
+
+local function ApplySkybox(name)
+	local currentSky = Lighting:FindFirstChildOfClass("Sky")
+	if name == "Default" then
+		if currentSky and currentSky:GetAttribute("NashSky") then
+			currentSky:Destroy()
+		end
+		return
+	end
+
+	if not currentSky then
+		currentSky = Instance.new("Sky")
+		currentSky:SetAttribute("NashSky", true)
+		currentSky.Parent = Lighting
+	end
+
+	local preset = SkyPresets[name]
+	if preset then
+		currentSky.SkyboxBk = preset.SkyboxBk
+		currentSky.SkyboxDn = preset.SkyboxDn
+		currentSky.SkyboxFt = preset.SkyboxFt
+		currentSky.SkyboxLf = preset.SkyboxLf
+		currentSky.SkyboxRt = preset.SkyboxRt
+		currentSky.SkyboxUp = preset.SkyboxUp
+	end
+end
+
+local CrosshairGui = Instance.new("Frame")
+CrosshairGui.Name = "CrosshairGui"
+CrosshairGui.AnchorPoint = Vector2.new(0.5, 0.5)
+CrosshairGui.Position = UDim2.new(0.5, 0, 0.5, 0)
+CrosshairGui.Size = UDim2.new(0, 100, 0, 100)
+CrosshairGui.BackgroundTransparency = 1
+CrosshairGui.Visible = false
+CrosshairGui.Parent = ScreenGui
+
+local TopLine = Instance.new("Frame", CrosshairGui)
+local BotLine = Instance.new("Frame", CrosshairGui)
+local LeftLine = Instance.new("Frame", CrosshairGui)
+local RightLine = Instance.new("Frame", CrosshairGui)
+
+local function UpdateCrosshair()
+	if not Config.Crosshair.Enabled then
+		CrosshairGui.Visible = false
+		return
+	end
+	CrosshairGui.Visible = true
+
+	local size = Config.Crosshair.Size
+	local gap = Config.Crosshair.Gap
+	local thick = Config.Crosshair.Thickness
+	local col = Config.Settings.RainbowMode and Color3.fromHSV((tick() % 3) / 3, 0.9, 1) or Config.Crosshair.Color
+
+	TopLine.Size = UDim2.new(0, thick, 0, size)
+	TopLine.Position = UDim2.new(0.5, -thick / 2, 0.5, -gap - size)
+	TopLine.BackgroundColor3 = col
+	TopLine.BorderSizePixel = 0
+
+	BotLine.Size = UDim2.new(0, thick, 0, size)
+	BotLine.Position = UDim2.new(0.5, -thick / 2, 0.5, gap)
+	BotLine.BackgroundColor3 = col
+	BotLine.BorderSizePixel = 0
+
+	LeftLine.Size = UDim2.new(0, size, 0, thick)
+	LeftLine.Position = UDim2.new(0.5, -gap - size, 0.5, -thick / 2)
+	LeftLine.BackgroundColor3 = col
+	LeftLine.BorderSizePixel = 0
+
+	RightLine.Size = UDim2.new(0, size, 0, thick)
+	RightLine.Position = UDim2.new(0.5, gap, 0.5, -thick / 2)
+	RightLine.BackgroundColor3 = col
+	RightLine.BorderSizePixel = 0
+
+	if Config.Crosshair.Spin then
+		CrosshairGui.Rotation = (CrosshairGui.Rotation + 3) % 360
+	else
+		CrosshairGui.Rotation = 0
+	end
+end
+
+local HitmarkerFrame = Instance.new("Frame")
+HitmarkerFrame.Name = "HitmarkerFrame"
+HitmarkerFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+HitmarkerFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+HitmarkerFrame.Size = UDim2.new(0, 20, 0, 20)
+HitmarkerFrame.BackgroundTransparency = 1
+HitmarkerFrame.Visible = false
+HitmarkerFrame.Parent = ScreenGui
+
+for _, rot in ipairs({45, 135}) do
+	local line = Instance.new("Frame", HitmarkerFrame)
+	line.AnchorPoint = Vector2.new(0.5, 0.5)
+	line.Position = UDim2.new(0.5, 0, 0.5, 0)
+	line.Size = UDim2.new(0, 16, 0, 2)
+	line.Rotation = rot
+	line.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+	line.BorderSizePixel = 0
+end
+
+local function TriggerHitmarker()
+	if not Config.Effects.Hitmarker then return end
+	HitmarkerFrame.Visible = true
+	HitmarkerFrame.Size = UDim2.new(0, 28, 0, 28)
+	TweenService:Create(HitmarkerFrame, TweenInfo.new(0.2), { Size = UDim2.new(0, 14, 0, 14) }):Play()
+	task.delay(0.2, function()
+		HitmarkerFrame.Visible = false
+	end)
+end
 
 local function IsEnemy(player)
 	if not player or player == LocalPlayer then return false end
@@ -185,6 +340,7 @@ local function CleanPlayerESP(player)
 		if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
 		if data.Billboard then pcall(function() data.Billboard:Destroy() end) end
 		if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) end
+		if data.Box3D then pcall(function() data.Box3D:Destroy() end) end
 		if data.HealthFrame then pcall(function() data.HealthFrame:Destroy() end) end
 		if data.TracerLine then pcall(function() data.TracerLine:Destroy() end) end
 		if data.HeadMarker then pcall(function() data.HeadMarker:Destroy() end) end
@@ -247,48 +403,24 @@ local function UpdateLineBetweenPoints(line, p1, p2, color, thickness)
 	line.Visible = true
 end
 
-local Box3DEdges = {
-	{1, 2}, {2, 3}, {3, 4}, {4, 1},
-	{5, 6}, {6, 7}, {7, 8}, {8, 5},
-	{1, 5}, {2, 6}, {3, 7}, {4, 8}
-}
-
-local function Draw3DBox(folder, char, color)
-	local cframe, size = char:GetBoundingBox()
-	local h = size * 0.5
-
-	local corners3D = {
-		cframe * Vector3.new(-h.X,  h.Y, -h.Z),
-		cframe * Vector3.new( h.X,  h.Y, -h.Z),
-		cframe * Vector3.new( h.X, -h.Y, -h.Z),
-		cframe * Vector3.new(-h.X, -h.Y, -h.Z),
-		cframe * Vector3.new(-h.X,  h.Y,  h.Z),
-		cframe * Vector3.new( h.X,  h.Y,  h.Z),
-		cframe * Vector3.new( h.X, -h.Y,  h.Z),
-		cframe * Vector3.new(-h.X, -h.Y,  h.Z),
-	}
-
-	local screenPoints = {}
-	local anyVisible = false
-
-	for i, pt in ipairs(corners3D) do
-		local sPos, onScreen = Camera:WorldToViewportPoint(pt)
-		if onScreen then
-			anyVisible = true
-		end
-		screenPoints[i] = Vector2.new(sPos.X, sPos.Y)
+local function Draw3DBoxAdornee(data, char, color, filled)
+	if not data.Box3D or not data.Box3D.Parent then
+		local sel = Instance.new("SelectionBox")
+		sel.Name = "ESP_3DBox"
+		sel.LineThickness = 0.05
+		sel.Color3 = color
+		sel.SurfaceColor3 = color
+		sel.SurfaceTransparency = filled and 0.75 or 1
+		sel.Adornee = char
+		sel.Parent = ScreenGui
+		data.Box3D = sel
+	else
+		data.Box3D.Adornee = char
+		data.Box3D.Color3 = color
+		data.Box3D.SurfaceColor3 = color
+		data.Box3D.SurfaceTransparency = filled and 0.75 or 1
+		data.Box3D.Visible = true
 	end
-
-	if not anyVisible then return false end
-
-	for i, edge in ipairs(Box3DEdges) do
-		local p1 = screenPoints[edge[1]]
-		local p2 = screenPoints[edge[2]]
-		local line = DrawLineSegment(folder, "Box3D_" .. tostring(i))
-		UpdateLineBetweenPoints(line, p1, p2, color, 1.5)
-	end
-
-	return true
 end
 
 local function GetCharacterBoundingScreenBox(char)
@@ -347,6 +479,7 @@ local function UpdatePlayerESP(player)
 	end
 
 	local data = ESPData[player]
+	local activeColor = Config.Settings.RainbowMode and Color3.fromHSV((tick() % 3) / 3, 0.9, 1) or Config.ESP.BoxColor
 
 	if Config.ESP.Chams then
 		if not data.Highlight or not data.Highlight.Parent then
@@ -378,35 +511,38 @@ local function UpdatePlayerESP(player)
 	local hrpScreenPos, hrpOnScreen = Camera:WorldToViewportPoint(hrp.Position)
 
 	if onScreen then
-		if Config.ESP.BoxMode ~= "Off" then
+		if Config.ESP.BoxMode == "3D Wireframe" then
+			Draw3DBoxAdornee(data, char, activeColor, false)
+			if data.BoxFolder then data.BoxFolder:Destroy() data.BoxFolder = nil end
+		elseif Config.ESP.BoxMode == "3D Filled" then
+			Draw3DBoxAdornee(data, char, activeColor, true)
+			if data.BoxFolder then data.BoxFolder:Destroy() data.BoxFolder = nil end
+		elseif Config.ESP.BoxMode == "Full" then
+			if data.Box3D then data.Box3D:Destroy() data.Box3D = nil end
 			if not data.BoxFolder or not data.BoxFolder.Parent then
 				local folder = Instance.new("Folder")
 				folder.Name = "ESP_BoxFolder"
 				folder.Parent = ScreenGui
 				data.BoxFolder = folder
 			end
-
-			if Config.ESP.BoxMode == "3D" then
-				Draw3DBox(data.BoxFolder, char, Config.ESP.BoxColor)
-			elseif Config.ESP.BoxMode == "Full" then
-				local box = data.BoxFolder:FindFirstChild("FullBox")
-				if not box then
-					box = Instance.new("Frame")
-					box.Name = "FullBox"
-					box.BackgroundTransparency = 1
-					box.Parent = data.BoxFolder
-					local stroke = Instance.new("UIStroke")
-					stroke.Name = "Stroke"
-					stroke.Thickness = 1.5
-					stroke.Color = Config.ESP.BoxColor
-					stroke.Parent = box
-				end
-				box.Size = UDim2.new(0, boxWidth, 0, boxHeight)
-				box.Position = UDim2.new(0, boxX, 0, boxY)
-				box.Visible = true
+			local box = data.BoxFolder:FindFirstChild("FullBox")
+			if not box then
+				box = Instance.new("Frame")
+				box.Name = "FullBox"
+				box.BackgroundTransparency = 1
+				box.Parent = data.BoxFolder
+				local stroke = Instance.new("UIStroke")
+				stroke.Name = "Stroke"
+				stroke.Thickness = 1.5
+				stroke.Color = activeColor
+				stroke.Parent = box
 			end
+			box.Size = UDim2.new(0, boxWidth, 0, boxHeight)
+			box.Position = UDim2.new(0, boxX, 0, boxY)
+			box.Visible = true
 		else
-			if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) data.BoxFolder = nil end
+			if data.Box3D then data.Box3D:Destroy() data.Box3D = nil end
+			if data.BoxFolder then data.BoxFolder:Destroy() data.BoxFolder = nil end
 		end
 
 		if Config.ESP.Skeleton then
@@ -505,6 +641,7 @@ local function UpdatePlayerESP(player)
 			if data.TracerLine then data.TracerLine.Visible = false end
 		end
 	else
+		if data.Box3D then data.Box3D.Visible = false end
 		if data.BoxFolder then pcall(function() data.BoxFolder:Destroy() end) data.BoxFolder = nil end
 		if data.SkeletonFolder then pcall(function() data.SkeletonFolder:Destroy() end) data.SkeletonFolder = nil end
 		if data.HealthFrame then data.HealthFrame.Visible = false end
@@ -645,11 +782,31 @@ local function GetClosestTargetWorld()
 	return targetPart
 end
 
+local function AttachKnifeEffects(knife)
+	if Config.KnifeControl.VisualTrail and not knife:FindFirstChild("NashTrail") then
+		local a0 = Instance.new("Attachment", knife)
+		local a1 = Instance.new("Attachment", knife)
+		a0.Position = Vector3.new(0, 0.5, 0)
+		a1.Position = Vector3.new(0, -0.5, 0)
+
+		local trail = Instance.new("Trail")
+		trail.Name = "NashTrail"
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.Color = ColorSequence.new(Config.Settings.AccentColor)
+		trail.Lifetime = 0.4
+		trail.WidthScale = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0)})
+		trail.Parent = knife
+	end
+end
+
 local function SteerKnifeProjectile(knife)
 	if not knife or not knife:IsA("BasePart") then return end
 
 	local target = GetClosestTargetWorld()
 	if not target then return end
+
+	AttachKnifeEffects(knife)
 
 	local targetPos = target.Position
 
@@ -672,6 +829,10 @@ local function SteerKnifeProjectile(knife)
 
 	local direction = (targetPos - knife.Position).Unit
 	local newVelocity = direction * Config.KnifeControl.GuideSpeed
+
+	if (targetPos - knife.Position).Magnitude < 4 then
+		TriggerHitmarker()
+	end
 
 	pcall(function()
 		if Config.KnifeControl.SteerMode == "SmoothLerp" then
@@ -728,8 +889,8 @@ end
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 580, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -290, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 600, 0, 420)
+MainFrame.Position = UDim2.new(0.5, -300, 0.5, -210)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 13, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -746,7 +907,7 @@ MainStroke.Thickness = 1.2
 MainStroke.Parent = MainFrame
 
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 155, 1, 0)
+Sidebar.Size = UDim2.new(0, 160, 1, 0)
 Sidebar.BackgroundColor3 = Color3.fromRGB(18, 15, 26)
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
@@ -762,7 +923,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 0, 40)
 Title.Position = UDim2.new(0, 10, 0, 10)
 Title.BackgroundTransparency = 1
-Title.Text = "NASH CORE v2"
+Title.Text = "NASH CORE v3"
 Title.TextColor3 = Color3.fromRGB(240, 240, 245)
 Title.TextSize = 15
 Title.Font = Enum.Font.SourceSansBold
@@ -781,8 +942,8 @@ TabList.Padding = UDim.new(0, 4)
 TabList.Parent = TabContainer
 
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -155, 1, 0)
-ContentArea.Position = UDim2.new(0, 155, 0, 0)
+ContentArea.Size = UDim2.new(1, -160, 1, 0)
+ContentArea.Position = UDim2.new(0, 160, 0, 0)
 ContentArea.BackgroundTransparency = 1
 ContentArea.Parent = MainFrame
 
@@ -995,8 +1156,12 @@ CreateToggle(espPage, "Master ESP Toggle", Config.ESP.Enabled, function(v)
 	Config.ESP.Enabled = v
 	if not v then ClearAllESP() end
 end)
-CreateToggle(espPage, "3D Bounding Box ESP", Config.ESP.BoxMode == "3D", function(v)
-	Config.ESP.BoxMode = v and "3D" or "Off"
+CreateToggle(espPage, "3D Box Wireframe", Config.ESP.BoxMode == "3D Wireframe", function(v)
+	Config.ESP.BoxMode = v and "3D Wireframe" or "Off"
+	ClearAllESP()
+end)
+CreateToggle(espPage, "3D Box Filled", Config.ESP.BoxMode == "3D Filled", function(v)
+	Config.ESP.BoxMode = v and "3D Filled" or "Off"
 	ClearAllESP()
 end)
 CreateToggle(espPage, "Full 2D Box ESP", Config.ESP.BoxMode == "Full", function(v)
@@ -1023,15 +1188,38 @@ local knifePage = CreateTab("Knife Control")
 CreateToggle(knifePage, "Enable Knife Steering", Config.KnifeControl.Enabled, function(v) Config.KnifeControl.Enabled = v end)
 CreateToggle(knifePage, "Target Lock System", Config.KnifeControl.LockOnTarget, function(v) Config.KnifeControl.LockOnTarget = v end)
 CreateToggle(knifePage, "Predict Movement", Config.KnifeControl.PredictMovement, function(v) Config.KnifeControl.PredictMovement = v end)
-CreateSlider(knifePage, "Knife Speed", 20, 600, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
+CreateToggle(knifePage, "Knife Visual Trail", Config.KnifeControl.VisualTrail, function(v) Config.KnifeControl.VisualTrail = v end)
+CreateSlider(knifePage, "Knife Speed", 20, 800, Config.KnifeControl.GuideSpeed, function(v) Config.KnifeControl.GuideSpeed = v end)
 CreateSlider(knifePage, "Arc Curve Height", 0, 50, Config.KnifeControl.ArcHeight, function(v) Config.KnifeControl.ArcHeight = v end)
-CreateSlider(knifePage, "Control Radius", 50, 1500, Config.KnifeControl.ControlRadius, function(v) Config.KnifeControl.ControlRadius = v end)
+CreateSlider(knifePage, "Control Radius", 50, 2000, Config.KnifeControl.ControlRadius, function(v) Config.KnifeControl.ControlRadius = v end)
+
+local worldPage = CreateTab("Sky & World")
+CreateButton(worldPage, "Skybox: Default", function() ApplySkybox("Default") end)
+CreateButton(worldPage, "Skybox: Purple Nebula", function() ApplySkybox("Purple Nebula") end)
+CreateButton(worldPage, "Skybox: Red Sunset", function() ApplySkybox("Red Sunset") end)
+CreateButton(worldPage, "Skybox: Night Sky", function() ApplySkybox("Night Sky") end)
+CreateToggle(worldPage, "Override Time of Day", Config.World.ChangeTime, function(v) Config.World.ChangeTime = v end)
+CreateSlider(worldPage, "Time (Hours)", 0, 24, Config.World.TimeOfDay, function(v)
+	Config.World.TimeOfDay = v
+	if Config.World.ChangeTime then Lighting.ClockTime = v end
+end)
+
+local crosshairPage = CreateTab("Crosshair")
+CreateToggle(crosshairPage, "Enable Custom Crosshair", Config.Crosshair.Enabled, function(v) Config.Crosshair.Enabled = v end)
+CreateToggle(crosshairPage, "Spin Animation", Config.Crosshair.Spin, function(v) Config.Crosshair.Spin = v end)
+CreateSlider(crosshairPage, "Size", 4, 30, Config.Crosshair.Size, function(v) Config.Crosshair.Size = v end)
+CreateSlider(crosshairPage, "Gap", 0, 20, Config.Crosshair.Gap, function(v) Config.Crosshair.Gap = v end)
+CreateSlider(crosshairPage, "Thickness", 1, 6, Config.Crosshair.Thickness, function(v) Config.Crosshair.Thickness = v end)
+
+local effectsPage = CreateTab("Effects")
+CreateToggle(effectsPage, "Hitmarker Effect", Config.Effects.Hitmarker, function(v) Config.Effects.Hitmarker = v end)
 
 local settingsPage = CreateTab("Settings")
 CreateToggle(settingsPage, "Global Team Check", Config.Settings.TeamCheck, function(v)
 	Config.Settings.TeamCheck = v
 	ClearAllESP()
 end)
+CreateToggle(settingsPage, "Rainbow Dynamic Colors", Config.Settings.RainbowMode, function(v) Config.Settings.RainbowMode = v end)
 
 CreateButton(settingsPage, "Unload Script & Teleport Lock", function()
 	getgenv().AlreadyLoaded = false
@@ -1047,6 +1235,7 @@ CreateButton(settingsPage, "Unload Script & Teleport Lock", function()
 	Connections = {}
 
 	ClearAllESP()
+	ApplySkybox("Default")
 
 	if ScreenGui then
 		pcall(function() ScreenGui:Destroy() end)
@@ -1087,6 +1276,12 @@ BindSignal(UserInputService.InputBegan, function(input, gpe)
 end)
 
 BindSignal(RunService.RenderStepped, function()
+	UpdateCrosshair()
+
+	if Config.World.ChangeTime then
+		Lighting.ClockTime = Config.World.TimeOfDay
+	end
+
 	if Config.Aimbot.ShowFOV then
 		local mousePos = UserInputService:GetMouseLocation()
 		FOVCircle.Size = UDim2.new(0, Config.Aimbot.FOV * 2, 0, Config.Aimbot.FOV * 2)
