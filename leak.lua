@@ -59,12 +59,15 @@ end
 local Config = {
 	Settings = {
 		TeamCheck = true,
-		AccentColor = Color3.fromRGB(168, 85, 247),
+		AccentColor = Color3.fromRGB(145, 12, 42),
+		EnemyColor = Color3.fromRGB(12, 105, 225),
+		TeamColor = Color3.fromRGB(145, 12, 42),
 	},
 	ESP = {
 		Enabled = false,
-		BoxMode = "3D Wireframe",
-		UseUniqueColors = true,
+		ShowTeammates = true,
+		BoxMode = "Chromatic 3D",
+		ChromaticEffect = true,
 		BoxFill = false,
 		BoxFillTransparency = 0.85,
 		Skeleton = false,
@@ -81,7 +84,7 @@ local Config = {
 	Visuals = {
 		Crosshair = false,
 		CrosshairStyle = "Cross",
-		CrosshairColor = Color3.fromRGB(168, 85, 247),
+		CrosshairColor = Color3.fromRGB(12, 105, 225),
 		CrosshairSize = 10,
 		CrosshairThickness = 2,
 		CrosshairGap = 4,
@@ -266,57 +269,89 @@ end
 local ESPData = {}
 local LockedTargetPlayer = nil
 
+local function GetPlayerTeamIdentifier(player)
+	if not player then return nil end
+
+	if player.Team ~= nil then
+		return tostring(player.Team)
+	end
+
+	if player.TeamColor ~= nil then
+		return tostring(player.TeamColor)
+	end
+
+	local char = player.Character
+	if char then
+		local attrNames = {"Team", "Faction", "Side", "Role", "Group", "Squad", "TeamColor"}
+		for _, attrName in ipairs(attrNames) do
+			local valChar = char:GetAttribute(attrName)
+			if valChar ~= nil then return tostring(valChar) end
+			local valPlr = player:GetAttribute(attrName)
+			if valPlr ~= nil then return tostring(valPlr) end
+		end
+
+		for _, name in ipairs({"Team", "Faction", "Side", "Role", "Squad", "TeamColor", "TeamValue"}) do
+			local child = char:FindFirstChild(name) or player:FindFirstChild(name)
+			if child and (child:IsA("ValueBase") or child:IsA("StringValue") or child:IsA("ObjectValue") or child:IsA("Color3Value")) then
+				return tostring(child.Value)
+			end
+		end
+
+		if char.Parent and char.Parent ~= workspace and (char.Parent:IsA("Folder") or char.Parent:IsA("Model")) then
+			local pName = char.Parent.Name:lower()
+			if pName:find("red") or pName:find("blue") or pName:find("team") or pName:find("survivor") or pName:find("killer") or pName:find("infected") or pName:find("guard") or pName:find("prisoner") or pName:find("cop") or pName:find("crim") then
+				return char.Parent.Name
+			end
+		end
+	end
+
+	local leader = player:FindFirstChild("leaderstats")
+	if leader then
+		for _, name in ipairs({"Team", "Faction", "Side", "Role", "Squad"}) do
+			local child = leader:FindFirstChild(name)
+			if child and child:IsA("ValueBase") then
+				return tostring(child.Value)
+			end
+		end
+	end
+
+	return nil
+end
+
 local function IsEnemy(player)
 	if not player or player == LocalPlayer then return false end
 	if not Config.Settings.TeamCheck then return true end
+
+	local localIdent = GetPlayerTeamIdentifier(LocalPlayer)
+	local targetIdent = GetPlayerTeamIdentifier(player)
+
+	if localIdent ~= nil and targetIdent ~= nil then
+		return localIdent ~= targetIdent
+	end
 
 	if LocalPlayer.Team ~= nil and player.Team ~= nil then
 		return LocalPlayer.Team ~= player.Team
 	end
 
-	if #Teams:GetTeams() > 0 then
-		if not LocalPlayer.Neutral and not player.Neutral and LocalPlayer.TeamColor ~= nil and player.TeamColor ~= nil then
-			return LocalPlayer.TeamColor ~= player.TeamColor
-		end
-	end
-
-	local lChar = LocalPlayer.Character
-	local tChar = player.Character
-
-	if lChar and tChar then
-		local lAttr = lChar:GetAttribute("Team") or lChar:GetAttribute("Faction") or LocalPlayer:GetAttribute("Team") or LocalPlayer:GetAttribute("Faction")
-		local tAttr = tChar:GetAttribute("Team") or tChar:GetAttribute("Faction") or player:GetAttribute("Team") or player:GetAttribute("Faction")
-		if lAttr ~= nil and tAttr ~= nil then
-			return tostring(lAttr) ~= tostring(tAttr)
-		end
-	end
-
-	local lLeader = LocalPlayer:FindFirstChild("leaderstats")
-	local tLeader = player:FindFirstChild("leaderstats")
-	if lLeader and tLeader then
-		local lTeam = lLeader:FindFirstChild("Team") or lLeader:FindFirstChild("Faction")
-		local tTeam = tLeader:FindFirstChild("Team") or tLeader:FindFirstChild("Faction")
-		if lTeam and tTeam then
-			return tostring(lTeam.Value) ~= tostring(tTeam.Value)
-		end
+	if LocalPlayer.TeamColor ~= nil and player.TeamColor ~= nil then
+		return LocalPlayer.TeamColor ~= player.TeamColor
 	end
 
 	return true
 end
 
-local function GetPlayerColor(player)
-	if not Config.ESP.UseUniqueColors then
-		return Config.Settings.AccentColor
+local function GetPlayerBaseColor(player)
+	if IsEnemy(player) then
+		return Config.Settings.EnemyColor
+	else
+		return Config.Settings.TeamColor
 	end
+end
 
-	if player.Team and player.TeamColor then
-		return player.TeamColor.Color
-	end
-
-	local userId = player.UserId or 0
-	local goldenRatio = 0.618033988749895
-	local hue = (userId * goldenRatio) % 1
-	return Color3.fromHSV(hue, 0.82, 1)
+local function GetChromaticColor(baseColor, offset)
+	local h, s, v = baseColor:ToHSV()
+	local shift = math.sin(tick() * 3.5 + (offset or 0)) * 0.08
+	return Color3.fromHSV((h + shift) % 1, math.clamp(s + 0.1, 0, 1), v)
 end
 
 local FOVCircle = Instance.new("Frame")
@@ -346,7 +381,7 @@ TargetTracker.Visible = false
 TargetTracker.Parent = ScreenGui
 
 local TrackerStroke = Instance.new("UIStroke")
-TrackerStroke.Color = Color3.fromRGB(255, 60, 60)
+TrackerStroke.Color = Config.Settings.EnemyColor
 TrackerStroke.Thickness = 1.8
 TrackerStroke.Parent = TargetTracker
 
@@ -428,7 +463,7 @@ local Box3DEdges = {
 	{1, 5}, {2, 6}, {3, 7}, {4, 8}
 }
 
-local function Draw3DBox(folder, char, color)
+local function Draw3DBox(folder, char, baseColor)
 	local cframe, size = char:GetBoundingBox()
 	local h = size * 0.5
 
@@ -456,57 +491,24 @@ local function Draw3DBox(folder, char, color)
 
 	if not anyVisible then return false end
 
+	local mainColor = Config.ESP.ChromaticEffect and GetChromaticColor(baseColor, 0) or baseColor
+	local offsetColor = Config.ESP.ChromaticEffect and GetChromaticColor(baseColor, 2.0) or baseColor
+
 	for i, edge in ipairs(Box3DEdges) do
 		local p1 = screenPoints[edge[1]]
 		local p2 = screenPoints[edge[2]]
-		local line = DrawLineSegment(folder, "Box3D_" .. tostring(i))
-		UpdateLineBetweenPoints(line, p1, p2, color, 1.5)
-	end
+		
+		local line = DrawLineSegment(folder, "Box3D_Main_" .. tostring(i))
+		UpdateLineBetweenPoints(line, p1, p2, mainColor, 1.6)
 
-	return true
-end
-
-local function Draw3DCorners(folder, char, color)
-	local cframe, size = char:GetBoundingBox()
-	local h = size * 0.5
-
-	local corners3D = {
-		cframe * Vector3.new(-h.X,  h.Y, -h.Z),
-		cframe * Vector3.new( h.X,  h.Y, -h.Z),
-		cframe * Vector3.new( h.X, -h.Y, -h.Z),
-		cframe * Vector3.new(-h.X, -h.Y, -h.Z),
-		cframe * Vector3.new(-h.X,  h.Y,  h.Z),
-		cframe * Vector3.new( h.X,  h.Y,  h.Z),
-		cframe * Vector3.new( h.X, -h.Y,  h.Z),
-		cframe * Vector3.new(-h.X, -h.Y,  h.Z),
-	}
-
-	local screenPoints = {}
-	local anyVisible = false
-
-	for i, pt in ipairs(corners3D) do
-		local sPos, onScreen = Camera:WorldToViewportPoint(pt)
-		if onScreen then
-			anyVisible = true
+		if Config.ESP.ChromaticEffect then
+			local shiftVec = Vector2.new(math.sin(tick() * 5) * 1.5, math.cos(tick() * 5) * 1.5)
+			local lineChroma = DrawLineSegment(folder, "Box3D_Chroma_" .. tostring(i))
+			UpdateLineBetweenPoints(lineChroma, p1 + shiftVec, p2 + shiftVec, offsetColor, 1.2)
+		else
+			local oldChroma = folder:FindFirstChild("Box3D_Chroma_" .. tostring(i))
+			if oldChroma then oldChroma.Visible = false end
 		end
-		screenPoints[i] = Vector2.new(sPos.X, sPos.Y)
-	end
-
-	if not anyVisible then return false end
-
-	for i, edge in ipairs(Box3DEdges) do
-		local p1 = screenPoints[edge[1]]
-		local p2 = screenPoints[edge[2]]
-		local dir = (p2 - p1)
-		local len = dir.Magnitude * 0.25
-		local midP1 = p1 + (dir.Unit * len)
-		local midP2 = p2 - (dir.Unit * len)
-
-		local lineA = DrawLineSegment(folder, "Corner3DA_" .. tostring(i))
-		UpdateLineBetweenPoints(lineA, p1, midP1, color, 1.8)
-
-		local lineB = DrawLineSegment(folder, "Corner3DB_" .. tostring(i))
-		UpdateLineBetweenPoints(lineB, p2, midP2, color, 1.8)
 	end
 
 	return true
@@ -546,7 +548,10 @@ local function GetCharacterBoundingScreenBox(char)
 end
 
 local function UpdatePlayerESP(player)
-	if not IsEnemy(player) then
+	if player == LocalPlayer then return end
+
+	local isEnemy = IsEnemy(player)
+	if not isEnemy and not Config.ESP.ShowTeammates then
 		CleanPlayerESP(player)
 		return
 	end
@@ -568,24 +573,27 @@ local function UpdatePlayerESP(player)
 	end
 
 	local data = ESPData[player]
-	local playerColor = GetPlayerColor(player)
+	local baseColor = GetPlayerBaseColor(player)
+	local dynamicColor = Config.ESP.ChromaticEffect and GetChromaticColor(baseColor, 0) or baseColor
 
 	if Config.ESP.Chams then
 		if not data.Highlight or not data.Highlight.Parent then
 			if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
 			local hl = Instance.new("Highlight")
 			hl.Name = "ESP_Cham"
-			hl.FillColor = playerColor
+			hl.FillColor = baseColor
 			hl.FillTransparency = 0.35
-			hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-			hl.OutlineTransparency = 0.1
+			hl.OutlineColor = GetChromaticColor(baseColor, 3.14)
+			hl.OutlineTransparency = 0.05
 			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 			hl.Adornee = char
 			hl.Parent = ScreenGui
 			data.Highlight = hl
 		else
 			data.Highlight.Adornee = char
-			data.Highlight.FillColor = playerColor
+			data.Highlight.FillColor = baseColor
+			data.Highlight.OutlineColor = GetChromaticColor(baseColor, 3.14)
+			data.Highlight.FillTransparency = 0.35 + math.sin(tick() * 4) * 0.1
 			data.Highlight.Enabled = true
 		end
 	else
@@ -608,10 +616,8 @@ local function UpdatePlayerESP(player)
 				data.BoxFolder = folder
 			end
 
-			if Config.ESP.BoxMode == "3D Wireframe" then
-				Draw3DBox(data.BoxFolder, char, playerColor)
-			elseif Config.ESP.BoxMode == "3D Corners" then
-				Draw3DCorners(data.BoxFolder, char, playerColor)
+			if Config.ESP.BoxMode == "Chromatic 3D" or Config.ESP.BoxMode == "3D Wireframe" then
+				Draw3DBox(data.BoxFolder, char, baseColor)
 			elseif Config.ESP.BoxMode == "Full 2D" then
 				local box = data.BoxFolder:FindFirstChild("FullBox")
 				if not box then
@@ -622,15 +628,15 @@ local function UpdatePlayerESP(player)
 					local stroke = Instance.new("UIStroke")
 					stroke.Name = "Stroke"
 					stroke.Thickness = 1.5
-					stroke.Color = playerColor
+					stroke.Color = dynamicColor
 					stroke.Parent = box
 				else
 					local stroke = box:FindFirstChild("Stroke")
-					if stroke then stroke.Color = playerColor end
+					if stroke then stroke.Color = dynamicColor end
 				end
 				box.Size = UDim2.new(0, boxWidth, 0, boxHeight)
 				box.Position = UDim2.new(0, boxX, 0, boxY)
-				box.BackgroundColor3 = playerColor
+				box.BackgroundColor3 = baseColor
 				box.BackgroundTransparency = Config.ESP.BoxFill and Config.ESP.BoxFillTransparency or 1
 				box.Visible = true
 			end
@@ -720,7 +726,7 @@ local function UpdatePlayerESP(player)
 				local line = Instance.new("Frame")
 				line.Name = "ESP_Tracer"
 				line.AnchorPoint = Vector2.new(0.5, 0.5)
-				line.BackgroundColor3 = playerColor
+				line.BackgroundColor3 = dynamicColor
 				line.BorderSizePixel = 0
 				line.Parent = ScreenGui
 
@@ -729,7 +735,7 @@ local function UpdatePlayerESP(player)
 
 			local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
 			local targetScreenPos = Vector2.new(hrpScreenPos.X, hrpScreenPos.Y)
-			UpdateLineBetweenPoints(data.TracerLine, screenCenter, targetScreenPos, playerColor, 1.2)
+			UpdateLineBetweenPoints(data.TracerLine, screenCenter, targetScreenPos, dynamicColor, 1.2)
 		else
 			if data.TracerLine then data.TracerLine.Visible = false end
 		end
@@ -757,7 +763,7 @@ local function UpdatePlayerESP(player)
 			label.Name = "TagLabel"
 			label.Size = UDim2.new(1, 0, 1, 0)
 			label.BackgroundTransparency = 1
-			label.TextColor3 = playerColor
+			label.TextColor3 = dynamicColor
 			label.TextSize = 13
 			label.Font = Enum.Font.SourceSansBold
 			label.TextStrokeTransparency = 0.2
@@ -772,10 +778,11 @@ local function UpdatePlayerESP(player)
 		end
 
 		if data.Label then
-			data.Label.TextColor3 = playerColor
+			data.Label.TextColor3 = dynamicColor
 			local textLines = {}
 			if Config.ESP.Names then
-				table.insert(textLines, player.DisplayName)
+				local prefix = isEnemy and "[E] " or "[T] "
+				table.insert(textLines, prefix .. player.DisplayName)
 			end
 			if Config.ESP.Health then
 				local hp = math.floor(hum.Health)
@@ -876,7 +883,7 @@ local function GetClosestTargetWorld()
 end
 
 local function AttachKnifeEffects(knife, targetPlayer)
-	local effectColor = targetPlayer and GetPlayerColor(targetPlayer) or Config.Settings.AccentColor
+	local effectColor = targetPlayer and GetPlayerBaseColor(targetPlayer) or Config.Settings.EnemyColor
 
 	if Config.Effects.KnifeTrail and not knife:FindFirstChild("NASH_Trail") then
 		local a0 = Instance.new("Attachment")
@@ -1266,16 +1273,15 @@ CreateToggle(espPage, "Master ESP Toggle", Config.ESP.Enabled, function(v)
 	Config.ESP.Enabled = v
 	if not v then ClearAllESP() end
 end)
-CreateToggle(espPage, "Unique Color per Player/Team", Config.ESP.UseUniqueColors, function(v)
-	Config.ESP.UseUniqueColors = v
+CreateToggle(espPage, "Show Teammates (Rojo Tinto)", Config.ESP.ShowTeammates, function(v)
+	Config.ESP.ShowTeammates = v
 	ClearAllESP()
 end)
-CreateToggle(espPage, "3D Box Wireframe", Config.ESP.BoxMode == "3D Wireframe", function(v)
-	Config.ESP.BoxMode = v and "3D Wireframe" or "Off"
-	ClearAllESP()
+CreateToggle(espPage, "Chromatic Aberration Shader", Config.ESP.ChromaticEffect, function(v)
+	Config.ESP.ChromaticEffect = v
 end)
-CreateToggle(espPage, "3D Corner Box Frame", Config.ESP.BoxMode == "3D Corners", function(v)
-	Config.ESP.BoxMode = v and "3D Corners" or "Off"
+CreateToggle(espPage, "Chromatic 3D Box Wireframe", Config.ESP.BoxMode == "Chromatic 3D", function(v)
+	Config.ESP.BoxMode = v and "Chromatic 3D" or "Off"
 	ClearAllESP()
 end)
 CreateToggle(espPage, "Full 2D Box ESP", Config.ESP.BoxMode == "Full 2D", function(v)
